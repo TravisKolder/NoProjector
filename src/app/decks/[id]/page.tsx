@@ -1,0 +1,454 @@
+"use client";
+
+import Link from "next/link";
+import { useParams, useRouter } from "next/navigation";
+import { useCallback, useEffect, useRef, useState } from "react";
+import Brand from "@/components/Brand";
+import SlideView from "@/components/SlideView";
+import { setPresenterToken } from "@/lib/device";
+import { THEMES, THEME_IDS } from "@/lib/themes";
+import type { Slide, SlideContent, ThemeId } from "@/lib/types";
+import { displayNameFor, useUser } from "@/lib/useUser";
+
+type SlideRow = Slide & { position: number };
+type Deck = { id: string; title: string; theme: ThemeId };
+type SaveState = "saved" | "saving" | "unsaved" | "error";
+
+const tableToText = (t?: string[][]) => (t ?? []).map((r) => r.join(" | ")).join("\n");
+const textToTable = (s: string) =>
+  s
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => line.split("|").map((c) => c.trim()));
+
+/** Shrinks large photos before upload so viewers on weak signal load them quickly. */
+async function shrinkImage(file: File): Promise<Blob> {
+  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(file.type)) return file;
+  try {
+    const bitmap = await createImageBitmap(file);
+    const max = 1920;
+    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
+    if (scale === 1 && file.size < 1_000_000) return file;
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.round(bitmap.width * scale);
+    canvas.height = Math.round(bitmap.height * scale);
+    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
+    return blob ?? file;
+  } catch {
+    return file;
+  }
+}
+
+export default function DeckBuilderPage() {
+  const { id: deckId } = useParams<{ id: string }>();
+  const router = useRouter();
+  const { supabase, user } = useUser();
+
+  const [deck, setDeck] = useState<Deck | null>(null);
+  const [slides, setSlides] = useState<SlideRow[]>([]);
+  const [selected, setSelected] = useState(0);
+  const [tableText, setTableText] = useState("");
+  const [saveState, setSaveState] = useState<SaveState>("saved");
+  const [error, setError] = useState<string | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [starting, setStarting] = useState(false);
+
+  const pending = useRef(new Map<string, SlideContent>());
+  const deckPending = useRef<Partial<Deck> | null>(null);
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => {
+    if (user === null) router.replace("/login");
+  }, [user, router]);
+
+  useEffect(() => {
+    if (!user) return;
+    (async () => {
+      const { data, error } = await supabase
+        .from("decks")
+        .select("id, title, theme, slides(id, kind, content, position)")
+        .eq("id", deckId)
+        .single();
+      if (error || !data) {
+        setError("Deck not found");
+        return;
+      }
+      setDeck({ id: data.id, title: data.title, theme: data.theme as ThemeId });
+      const rows = ((data.slides ?? []) as SlideRow[]).sort((a, b) => a.position - b.position);
+      setSlides(rows);
+      setTableText(tableToText(rows[0]?.content.table));
+    })();
+  }, [user, supabase, deckId]);
+
+  const flush = useCallback(async () => {
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = null;
+    const slideSaves = Array.from(pending.current.entries());
+    const deckSave = deckPending.current;
+    pending.current.clear();
+    deckPending.current = null;
+    if (!slideSaves.length && !deckSave) return true;
+    setSaveState("saving");
+    const results = await Promise.all([
+      ...slideSaves.map(([id, content]) => supabase.from("slides").update({ content }).eq("id", id)),
+      supabase
+        .from("decks")
+        .update({ ...(deckSave ?? {}), updated_at: new Date().toISOString() })
+        .eq("id", deckId),
+    ]);
+    const failed = results.find((r) => r.error);
+    setSaveState(failed ? "error" : "saved");
+    if (failed) setError(failed.error!.message);
+    return !failed;
+  }, [supabase, deckId]);
+
+  const scheduleSave = useCallback(() => {
+    setSaveState("unsaved");
+    if (timer.current) clearTimeout(timer.current);
+    timer.current = setTimeout(flush, 700);
+  }, [flush]);
+
+  useEffect(() => {
+    const warn = (e: BeforeUnloadEvent) => {
+      if (pending.current.size || deckPending.current) e.preventDefault();
+    };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, []);
+
+  const current = slides[selected];
+
+  function updateContent(patch: Partial<SlideContent>) {
+    if (!current) return;
+    const content = { ...current.content, ...patch };
+    for (const k of Object.keys(content) as (keyof SlideContent)[]) {
+      if (content[k] === "" || content[k] === undefined) delete content[k];
+    }
+    setSlides((s) => s.map((x, i) => (i === selected ? { ...x, content } : x)));
+    pending.current.set(current.id, content);
+    scheduleSave();
+  }
+
+  function updateDeck(patch: Partial<Deck>) {
+    setDeck((d) => (d ? { ...d, ...patch } : d));
+    deckPending.current = { ...(deckPending.current ?? {}), ...patch };
+    scheduleSave();
+  }
+
+  function select(i: number) {
+    setSelected(i);
+    setTableText(tableToText(slides[i]?.content.table));
+  }
+
+  async function addSlide() {
+    await flush();
+    const position = slides.length;
+    const { data, error } = await supabase
+      .from("slides")
+      .insert({ deck_id: deckId, position, content: {} })
+      .select("id, kind, content, position")
+      .single();
+    if (error || !data) return setError(error?.message ?? "Could not add slide");
+    setSlides((s) => [...s, data as SlideRow]);
+    setSelected(position);
+    setTableText("");
+  }
+
+  async function persistOrder(rows: SlideRow[]) {
+    setSaveState("saving");
+    const results = await Promise.all(
+      rows.map((r, i) => supabase.from("slides").update({ position: i }).eq("id", r.id)),
+    );
+    setSaveState(results.some((r) => r.error) ? "error" : "saved");
+  }
+
+  async function move(delta: -1 | 1) {
+    const to = selected + delta;
+    if (to < 0 || to >= slides.length) return;
+    await flush();
+    const rows = [...slides];
+    [rows[selected], rows[to]] = [rows[to], rows[selected]];
+    const renumbered = rows.map((r, i) => ({ ...r, position: i }));
+    setSlides(renumbered);
+    setSelected(to);
+    await persistOrder(renumbered);
+  }
+
+  async function duplicate() {
+    if (!current) return;
+    await flush();
+    const rows = [...slides];
+    const { data, error } = await supabase
+      .from("slides")
+      .insert({ deck_id: deckId, position: selected + 1, kind: current.kind, content: current.content })
+      .select("id, kind, content, position")
+      .single();
+    if (error || !data) return setError(error?.message ?? "Could not duplicate");
+    rows.splice(selected + 1, 0, data as SlideRow);
+    const renumbered = rows.map((r, i) => ({ ...r, position: i }));
+    setSlides(renumbered);
+    select(selected + 1);
+    await persistOrder(renumbered);
+  }
+
+  async function removeSlide() {
+    if (!current || !confirm("Delete this slide?")) return;
+    pending.current.delete(current.id);
+    const { error } = await supabase.from("slides").delete().eq("id", current.id);
+    if (error) return setError(error.message);
+    const rows = slides.filter((_, i) => i !== selected).map((r, i) => ({ ...r, position: i }));
+    setSlides(rows);
+    const next = Math.max(0, Math.min(selected, rows.length - 1));
+    setSelected(next);
+    setTableText(tableToText(rows[next]?.content.table));
+    await persistOrder(rows);
+  }
+
+  async function uploadImage(file: File) {
+    if (!user || !current) return;
+    if (file.size > 20_000_000) return setError("That image is over 20 MB.");
+    setUploading(true);
+    setError(null);
+    const blob = await shrinkImage(file);
+    const ext = blob.type === "image/jpeg" ? "jpg" : (file.name.split(".").pop() || "img").toLowerCase();
+    const path = `${user.id}/${deckId}/${crypto.randomUUID()}.${ext}`;
+    const { error } = await supabase.storage
+      .from("slide-images")
+      .upload(path, blob, { contentType: blob.type || file.type, cacheControl: "31536000" });
+    setUploading(false);
+    if (error) return setError(error.message);
+    const { data } = supabase.storage.from("slide-images").getPublicUrl(path);
+    updateContent({ imageUrl: data.publicUrl });
+  }
+
+  async function startSession() {
+    if (!deck) return;
+    setStarting(true);
+    setError(null);
+    const ok = await flush();
+    if (!ok) {
+      setStarting(false);
+      return;
+    }
+    const { data, error } = await supabase.rpc("start_session", {
+      p_deck_id: deck.id,
+      p_presenter_name: displayNameFor(user),
+    });
+    if (error || !data) {
+      setStarting(false);
+      return setError(error?.message ?? "Could not start the session");
+    }
+    const { code, token } = data as { code: string; token: string };
+    setPresenterToken(code, token);
+    router.push(`/present/${code}`);
+  }
+
+  async function deleteDeck() {
+    if (!deck || !confirm(`Delete "${deck.title}" and all its slides? This can't be undone.`)) return;
+    const { error } = await supabase.from("decks").delete().eq("id", deck.id);
+    if (error) return setError(error.message);
+    router.replace("/decks");
+  }
+
+  if (error && !deck) {
+    return (
+      <main className="page narrow">
+        <p className="error">{error}</p>
+        <Link href="/decks">Back to decks</Link>
+      </main>
+    );
+  }
+  if (!deck) return <main className="center-screen subtle">Loading…</main>;
+
+  const saveLabel = { saved: "All changes saved", saving: "Saving…", unsaved: "Editing…", error: "Couldn't save" }[saveState];
+
+  return (
+    <main className="page" style={{ maxWidth: 1100 }}>
+      <div className="topbar">
+        <div className="row">
+          <Brand />
+          <Link href="/decks" className="subtle">
+            ← Decks
+          </Link>
+        </div>
+        <div className="row">
+          <span className="save-state">{saveLabel}</span>
+          <button className="btn btn-primary" onClick={startSession} disabled={starting || slides.length === 0}>
+            {starting ? "Starting…" : "Start session"}
+          </button>
+        </div>
+      </div>
+
+      <div className="card stack" style={{ marginBottom: 20 }}>
+        <div>
+          <label className="label" htmlFor="deck-title">
+            Deck title
+          </label>
+          <input
+            id="deck-title"
+            className="input"
+            value={deck.title}
+            onChange={(e) => updateDeck({ title: e.target.value })}
+          />
+        </div>
+        <div>
+          <span className="label">Theme</span>
+          <div className="theme-swatches">
+            {THEME_IDS.map((id) => {
+              const t = THEMES[id];
+              return (
+                <button
+                  key={id}
+                  type="button"
+                  className={`swatch${deck.theme === id ? " active" : ""}`}
+                  style={{ background: t.bg, color: t.accent, fontFamily: t.font }}
+                  onClick={() => updateDeck({ theme: id })}
+                  aria-pressed={deck.theme === id}
+                >
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+
+      {error ? <p className="error">{error}</p> : null}
+
+      <div className="builder">
+        <nav className="slide-rail" aria-label="Slides">
+          {slides.map((s, i) => (
+            <button
+              key={s.id}
+              className={`rail-item${i === selected ? " active" : ""}`}
+              onClick={() => select(i)}
+              aria-label={`Slide ${i + 1}`}
+              aria-current={i === selected}
+            >
+              <span className="num">{i + 1}</span>
+              <SlideView slide={s} theme={deck.theme} variant="thumb" />
+            </button>
+          ))}
+          <button className="btn btn-sm" onClick={addSlide}>
+            + Add slide
+          </button>
+        </nav>
+
+        {current ? (
+          <section className="editor-grid">
+            <SlideView slide={current} theme={deck.theme} variant="preview" />
+            <div className="row">
+              <button className="btn btn-sm" onClick={() => move(-1)} disabled={selected === 0}>
+                ↑ Move up
+              </button>
+              <button className="btn btn-sm" onClick={() => move(1)} disabled={selected === slides.length - 1}>
+                ↓ Move down
+              </button>
+              <button className="btn btn-sm" onClick={duplicate}>
+                Duplicate
+              </button>
+              <span className="spacer" />
+              <button className="btn btn-sm btn-danger" onClick={removeSlide}>
+                Delete slide
+              </button>
+            </div>
+
+            <div className="card stack">
+              <div>
+                <label className="label" htmlFor="s-title">
+                  Title
+                </label>
+                <input
+                  id="s-title"
+                  className="input"
+                  value={current.content.title ?? ""}
+                  onChange={(e) => updateContent({ title: e.target.value })}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="s-body">
+                  Text
+                </label>
+                <textarea
+                  id="s-body"
+                  className="textarea"
+                  rows={6}
+                  placeholder={"Write a paragraph, or start lines with - for bullets."}
+                  value={current.content.body ?? ""}
+                  onChange={(e) => updateContent({ body: e.target.value })}
+                />
+              </div>
+              <div>
+                <span className="label">Image</span>
+                <div className="row">
+                  <label className="btn btn-sm">
+                    {uploading ? "Uploading…" : current.content.imageUrl ? "Replace image" : "Add image"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      disabled={uploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (f) uploadImage(f);
+                      }}
+                    />
+                  </label>
+                  {current.content.imageUrl ? (
+                    <button className="btn btn-sm btn-ghost" onClick={() => updateContent({ imageUrl: undefined })}>
+                      Remove image
+                    </button>
+                  ) : null}
+                </div>
+              </div>
+              <div>
+                <label className="label" htmlFor="s-table">
+                  Table <span className="subtle">(one row per line, separate cells with |, first row is the header)</span>
+                </label>
+                <textarea
+                  id="s-table"
+                  className="textarea"
+                  rows={4}
+                  placeholder={"Book | Chapters\nRomans | 16\nJames | 5"}
+                  value={tableText}
+                  onChange={(e) => {
+                    setTableText(e.target.value);
+                    const table = textToTable(e.target.value);
+                    updateContent({ table: table.length ? table : undefined });
+                  }}
+                />
+              </div>
+              <div>
+                <label className="label" htmlFor="s-notes">
+                  Speaker notes <span className="subtle">(only you see these)</span>
+                </label>
+                <textarea
+                  id="s-notes"
+                  className="textarea"
+                  rows={3}
+                  value={current.content.notes ?? ""}
+                  onChange={(e) => updateContent({ notes: e.target.value })}
+                />
+              </div>
+            </div>
+          </section>
+        ) : (
+          <div className="card">
+            <p className="muted" style={{ margin: 0 }}>
+              This deck has no slides yet.
+            </p>
+          </div>
+        )}
+      </div>
+
+      <div style={{ marginTop: 40 }}>
+        <button className="btn btn-sm btn-ghost btn-danger" onClick={deleteDeck}>
+          Delete deck
+        </button>
+      </div>
+    </main>
+  );
+}
