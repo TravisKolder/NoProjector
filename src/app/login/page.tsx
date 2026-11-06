@@ -16,7 +16,7 @@ export default function LoginPage() {
   useEffect(() => {
     // The callback routes send people back here with ?error=link when a link fails.
     if (new URLSearchParams(window.location.search).get("error") === "link") {
-      setError("That sign-in link didn't work. It may have expired or opened in a different browser. Request a new one and enter the code from the email instead.");
+      setError("That sign-in link didn't work. It may have expired or opened in a different browser. Request a new one from the browser your email app opens links in, usually Safari on iPhone.");
     }
   }, []);
 
@@ -70,7 +70,7 @@ export default function LoginPage() {
         {sent ? (
           <form className="stack" onSubmit={verify}>
             <p className="muted" style={{ margin: 0 }}>
-              We emailed <strong>{email}</strong>. Enter the code from the email here. It works on any device.
+              We emailed <strong>{email}</strong>. Open the link in this same browser, or, if the email includes a code, type it here.
             </p>
             <label className="label" htmlFor="otp">
               Sign-in code
@@ -105,7 +105,7 @@ export default function LoginPage() {
         ) : (
           <form className="stack" onSubmit={send}>
             <p className="muted" style={{ margin: 0 }}>
-              We&apos;ll email you a sign-in code. No password needed. Viewers never need to sign in.
+              We&apos;ll email you a sign-in link. No password needed. Viewers never need to sign in.
             </p>
             <label className="label" htmlFor="email">
               Email
@@ -121,7 +121,7 @@ export default function LoginPage() {
             />
             {error ? <p className="error">{error}</p> : null}
             <button className="btn btn-primary btn-block" disabled={busy}>
-              {busy ? "Sending…" : "Email me a sign-in code"}
+              {busy ? "Sending…" : "Email me a sign-in link"}
             </button>
           </form>
         )}
