@@ -520,6 +520,7 @@ export default function DeckBuilderPage() {
           supabase={supabase}
           userId={user.id}
           deckId={deckId}
+          theme={deck.theme}
           slides={slides}
           onClose={() => setImportFiles(null)}
           onAdded={finishImport}

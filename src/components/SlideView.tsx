@@ -2,7 +2,7 @@ import type { CSSProperties, ReactNode } from "react";
 import type { Slide } from "@/lib/types";
 import { getTheme, type Theme } from "@/lib/themes";
 
-type Variant = "full" | "preview" | "thumb";
+type Variant = "full" | "preview" | "thumb" | "card";
 
 type Props = {
   slide: Slide | undefined;
@@ -18,6 +18,8 @@ const BASE: Record<Variant, string> = {
   full: "clamp(17px, 2.2vw + 10px, 34px)",
   preview: "clamp(9px, 1.1vw, 16px)",
   thumb: "5px",
+  // Scales with the width of its container (needs `container-type: inline-size` on a parent).
+  card: "4cqw",
 };
 
 function resolveTheme(themeId: string, mode: Props["mode"]): Theme {
@@ -30,7 +32,7 @@ function resolveTheme(themeId: string, mode: Props["mode"]): Theme {
 function renderBody(body: string): ReactNode[] {
   const blocks: ReactNode[] = [];
   const lines = body.replace(/\r/g, "").split("\n");
-  let bullets: string[] = [];
+  let bullets: { text: string; level: number }[] = [];
   let para: string[] = [];
 
   const flushBullets = () => {
@@ -38,7 +40,9 @@ function renderBody(body: string): ReactNode[] {
       blocks.push(
         <ul key={`u${blocks.length}`} className="slide-list">
           {bullets.map((b, i) => (
-            <li key={i}>{b}</li>
+            <li key={i} className={b.level ? `lvl-${Math.min(b.level, 4)}` : undefined}>
+              {b.text}
+            </li>
           ))}
         </ul>,
       );
@@ -57,10 +61,12 @@ function renderBody(body: string): ReactNode[] {
   };
 
   for (const line of lines) {
-    const m = line.match(/^\s*(?:[-•*])\s+(.*)$/);
+    const m = line.match(/^(\s*)(?:[-•*])\s+(.*)$/);
     if (m) {
       flushPara();
-      bullets.push(m[1]);
+      // Two spaces (or a tab) of indent = one level deeper.
+      const indent = m[1].replace(/\t/g, "  ").length;
+      bullets.push({ text: m[2], level: Math.floor(indent / 2) });
     } else if (line.trim() === "") {
       flushBullets();
       flushPara();
