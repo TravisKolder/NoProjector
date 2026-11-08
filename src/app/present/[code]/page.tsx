@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import CopyLinkButton from "@/components/CopyLinkButton";
 import QrModal from "@/components/QrModal";
 import SlideView from "@/components/SlideView";
 import { clearPresenterToken, getDevice, getPref, getPresenterToken, setPref, setPresenterToken } from "@/lib/device";
@@ -271,6 +272,7 @@ export default function PresenterPage() {
         <button className="btn btn-sm" onClick={() => setModal("qr")}>
           Show QR
         </button>
+        <CopyLinkButton code={code} />
         <button className="btn btn-sm" onClick={() => setModal("handoff")}>
           Hand off
         </button>

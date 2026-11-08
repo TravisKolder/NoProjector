@@ -4,3 +4,4 @@ node_modules
 .vercel
 next-env.d.ts
 *.tsbuildinfo
+public/pdf.worker.min.mjs

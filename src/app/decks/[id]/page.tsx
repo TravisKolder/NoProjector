@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import Brand from "@/components/Brand";
+import ImportDialog from "@/components/ImportDialog";
 import SlideView from "@/components/SlideView";
 import { setPresenterToken } from "@/lib/device";
 import { THEMES, THEME_IDS } from "@/lib/themes";
@@ -54,6 +55,7 @@ export default function DeckBuilderPage() {
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
   const [starting, setStarting] = useState(false);
+  const [importFiles, setImportFiles] = useState<File[] | null>(null);
 
   const pending = useRef(new Map<string, SlideContent>());
   const deckPending = useRef<Partial<Deck> | null>(null);
@@ -137,9 +139,9 @@ export default function DeckBuilderPage() {
     scheduleSave();
   }
 
-  function select(i: number) {
+  function select(i: number, rows: SlideRow[] = slides) {
     setSelected(i);
-    setTableText(tableToText(slides[i]?.content.table));
+    setTableText(tableToText(rows[i]?.content.table));
   }
 
   async function addSlide() {
@@ -221,6 +223,23 @@ export default function DeckBuilderPage() {
     if (error) return setError(error.message);
     const { data } = supabase.storage.from("slide-images").getPublicUrl(path);
     updateContent({ imageUrl: data.publicUrl });
+  }
+
+  async function openImport(files: File[]) {
+    if (!files.length) return;
+    await flush();
+    setError(null);
+    setImportFiles(files);
+  }
+
+  function finishImport(rows: SlideRow[], removedIds: string[], suggestedTitle: string) {
+    setImportFiles(null);
+    const kept = slides.filter((s) => !removedIds.includes(s.id));
+    const all = [...kept, ...rows].sort((a, b) => a.position - b.position);
+    setSlides(all);
+    const first = all.findIndex((s) => s.id === rows[0]?.id);
+    select(Math.max(0, first), all);
+    if (deck && suggestedTitle && /^untitled deck$/i.test(deck.title.trim())) updateDeck({ title: suggestedTitle });
   }
 
   async function startSession() {
@@ -334,6 +353,20 @@ export default function DeckBuilderPage() {
           <button className="btn btn-sm" onClick={addSlide}>
             + Add slide
           </button>
+          <label className="btn btn-sm" title="PDF, PowerPoint (.pptx), or pictures">
+            Import slides…
+            <input
+              type="file"
+              hidden
+              multiple
+              accept=".pdf,application/pdf,.pptx,application/vnd.openxmlformats-officedocument.presentationml.presentation,image/*"
+              onChange={(e) => {
+                const files = Array.from(e.target.files ?? []);
+                e.target.value = "";
+                openImport(files);
+              }}
+            />
+          </label>
         </nav>
 
         {current ? (
@@ -355,6 +388,42 @@ export default function DeckBuilderPage() {
               </button>
             </div>
 
+            {current.kind === "image" ? (
+              <div className="card stack">
+                <p className="muted" style={{ margin: 0 }}>
+                  Imported slide. Viewers see it exactly as shown and can pinch to zoom. To change the words, edit
+                  the original file and import it again.
+                </p>
+                <div className="row">
+                  <label className="btn btn-sm">
+                    {uploading ? "Uploading…" : "Replace picture"}
+                    <input
+                      type="file"
+                      accept="image/*"
+                      hidden
+                      disabled={uploading}
+                      onChange={(e) => {
+                        const f = e.target.files?.[0];
+                        e.target.value = "";
+                        if (f) uploadImage(f);
+                      }}
+                    />
+                  </label>
+                </div>
+                <div>
+                  <label className="label" htmlFor="s-notes-img">
+                    Speaker notes <span className="subtle">(only you see these)</span>
+                  </label>
+                  <textarea
+                    id="s-notes-img"
+                    className="textarea"
+                    rows={3}
+                    value={current.content.notes ?? ""}
+                    onChange={(e) => updateContent({ notes: e.target.value })}
+                  />
+                </div>
+              </div>
+            ) : (
             <div className="card stack">
               <div>
                 <label className="label" htmlFor="s-title">
@@ -434,15 +503,28 @@ export default function DeckBuilderPage() {
                 />
               </div>
             </div>
+            )}
           </section>
         ) : (
           <div className="card">
             <p className="muted" style={{ margin: 0 }}>
-              This deck has no slides yet.
+              This deck has no slides yet. Add one, or import a PDF, PowerPoint file, or pictures.
             </p>
           </div>
         )}
       </div>
+
+      {importFiles && user ? (
+        <ImportDialog
+          files={importFiles}
+          supabase={supabase}
+          userId={user.id}
+          deckId={deckId}
+          slides={slides}
+          onClose={() => setImportFiles(null)}
+          onAdded={finishImport}
+        />
+      ) : null}
 
       <div style={{ marginTop: 40 }}>
         <button className="btn btn-sm btn-ghost btn-danger" onClick={deleteDeck}>

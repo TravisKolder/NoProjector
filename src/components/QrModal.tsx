@@ -1,11 +1,10 @@
 "use client";
 
 import { QRCodeSVG } from "qrcode.react";
-import { useState } from "react";
+import CopyLinkButton, { joinUrl } from "@/components/CopyLinkButton";
 
 export default function QrModal({ code, onClose }: { code: string; onClose: () => void }) {
-  const url = typeof window !== "undefined" ? `${window.location.origin}/s/${code}` : "";
-  const [copied, setCopied] = useState(false);
+  const url = joinUrl(code);
   const canShare = typeof navigator !== "undefined" && "share" in navigator;
 
   return (
@@ -16,32 +15,28 @@ export default function QrModal({ code, onClose }: { code: string; onClose: () =
           <QRCodeSVG value={url} size={260} level="M" marginSize={1} />
         </div>
         <div className="qr-code-text">{code}</div>
-        <p className="subtle" style={{ textAlign: "center", margin: 0 }}>
-          Or open {url.replace(/^https?:\/\//, "").replace(/\/s\/.*$/, "")} and enter the code
-        </p>
+        <div>
+          <span className="label">Or send this link</span>
+          <input
+            className="input link-field"
+            readOnly
+            value={url.replace(/^https?:\/\//, "")}
+            onFocus={(e) => e.currentTarget.select()}
+            aria-label="Join link"
+          />
+        </div>
         <div className="row">
-          <button
-            className="btn btn-sm"
-            onClick={async () => {
-              try {
-                await navigator.clipboard.writeText(url);
-                setCopied(true);
-                setTimeout(() => setCopied(false), 1500);
-              } catch {}
-            }}
-          >
-            {copied ? "Copied" : "Copy link"}
-          </button>
+          <CopyLinkButton code={code} className="btn btn-sm btn-primary" />
           {canShare ? (
             <button
               className="btn btn-sm"
-              onClick={() => navigator.share({ title: "Follow along", url }).catch(() => {})}
+              onClick={() => navigator.share({ title: "Follow along on No Projector", url }).catch(() => {})}
             >
-              Share
+              Share…
             </button>
           ) : null}
           <span className="spacer" />
-          <button className="btn btn-sm btn-primary" onClick={onClose}>
+          <button className="btn btn-sm" onClick={onClose}>
             Done
           </button>
         </div>
