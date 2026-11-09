@@ -2,16 +2,46 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Brand from "@/components/Brand";
 import ImportDialog from "@/components/ImportDialog";
 import SlideView from "@/components/SlideView";
+import SongPicker from "@/components/SongPicker";
+import { buildSongIndex, songAt } from "@/lib/songs";
 import { setPresenterToken } from "@/lib/device";
 import { THEMES, THEME_IDS } from "@/lib/themes";
 import type { Slide, SlideContent, ThemeId } from "@/lib/types";
 import { displayNameFor, useUser } from "@/lib/useUser";
 
 type SlideRow = Slide & { position: number };
+
+/** One thumbnail in the slide list. Memoized so typing on one slide doesn't redraw hundreds of others. */
+const RailItem = memo(function RailItem({
+  slide,
+  index,
+  active,
+  theme,
+  onSelect,
+}: {
+  slide: SlideRow;
+  index: number;
+  active: boolean;
+  theme: string;
+  onSelect: (i: number) => void;
+}) {
+  return (
+    <button
+      className={`rail-item${active ? " active" : ""}`}
+      onClick={() => onSelect(index)}
+      aria-label={`Slide ${index + 1}`}
+      aria-current={active}
+      data-slide={index}
+    >
+      <span className="num">{index + 1}</span>
+      <SlideView slide={slide} theme={theme} variant="thumb" />
+    </button>
+  );
+});
 type Deck = { id: string; title: string; theme: ThemeId };
 type SaveState = "saved" | "saving" | "unsaved" | "error";
 
@@ -56,6 +86,8 @@ export default function DeckBuilderPage() {
   const [uploading, setUploading] = useState(false);
   const [starting, setStarting] = useState(false);
   const [importFiles, setImportFiles] = useState<File[] | null>(null);
+  const [showSongs, setShowSongs] = useState(false);
+  const railRef = useRef<HTMLElement>(null);
 
   const pending = useRef(new Map<string, SlideContent>());
   const deckPending = useRef<Partial<Deck> | null>(null);
@@ -121,6 +153,12 @@ export default function DeckBuilderPage() {
   }, []);
 
   const current = slides[selected];
+  const songs = useMemo(() => buildSongIndex(slides, slides.map((s) => s.content.notes)), [slides]);
+
+  // Keep the selected thumbnail in view (e.g. after jumping to a song far down the deck).
+  useEffect(() => {
+    railRef.current?.querySelector<HTMLElement>(`[data-slide="${selected}"]`)?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [selected]);
 
   function updateContent(patch: Partial<SlideContent>) {
     if (!current) return;
@@ -138,6 +176,13 @@ export default function DeckBuilderPage() {
     deckPending.current = { ...(deckPending.current ?? {}), ...patch };
     scheduleSave();
   }
+
+  const slidesRef = useRef(slides);
+  slidesRef.current = slides;
+  const selectIndex = useCallback((i: number) => {
+    setSelected(i);
+    setTableText(tableToText(slidesRef.current[i]?.content.table));
+  }, []);
 
   function select(i: number, rows: SlideRow[] = slides) {
     setSelected(i);
@@ -337,18 +382,14 @@ export default function DeckBuilderPage() {
       {error ? <p className="error">{error}</p> : null}
 
       <div className="builder">
-        <nav className="slide-rail" aria-label="Slides">
-          {slides.map((s, i) => (
-            <button
-              key={s.id}
-              className={`rail-item${i === selected ? " active" : ""}`}
-              onClick={() => select(i)}
-              aria-label={`Slide ${i + 1}`}
-              aria-current={i === selected}
-            >
-              <span className="num">{i + 1}</span>
-              <SlideView slide={s} theme={deck.theme} variant="thumb" />
+        <nav className="slide-rail" aria-label="Slides" ref={railRef}>
+          {songs.length ? (
+            <button className="btn btn-sm btn-primary btn-songs" onClick={() => setShowSongs(true)}>
+              ♪ Find song ({songs.length})
             </button>
+          ) : null}
+          {slides.map((s, i) => (
+            <RailItem key={s.id} slide={s} index={i} active={i === selected} theme={deck.theme} onSelect={selectIndex} />
           ))}
           <button className="btn btn-sm" onClick={addSlide}>
             + Add slide
@@ -513,6 +554,18 @@ export default function DeckBuilderPage() {
           </div>
         )}
       </div>
+
+      {showSongs ? (
+        <SongPicker
+          songs={songs}
+          current={songAt(songs, selected)}
+          onPick={(song) => {
+            setShowSongs(false);
+            select(song.start);
+          }}
+          onClose={() => setShowSongs(false)}
+        />
+      ) : null}
 
       {importFiles && user ? (
         <ImportDialog

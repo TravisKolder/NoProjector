@@ -210,3 +210,23 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
 .import-thumb .slide { border-radius: 6px; border: 1px solid var(--line); }
 .import-thumb .skip-note { position: absolute; right: 6px; bottom: 4px; font-size: 10px; font-weight: 700; color: #5c4400; background: #fff3c4; border-radius: 4px; padding: 0 5px; }
 @media (max-width: 480px) { .mode-switch { grid-template-columns: 1fr; } }
+
+/* ───── Song picker ───── */
+.song-overlay { align-items: flex-start; padding-top: max(16px, env(safe-area-inset-top)); }
+.song-panel { max-width: 560px; display: flex; flex-direction: column; gap: 10px; max-height: calc(100dvh - 32px); overflow: hidden; padding: 14px; }
+.song-search { flex: 1; min-width: 0; font-size: 17px; }
+.song-list { list-style: none; margin: 0; padding: 0; overflow-y: auto; -webkit-overflow-scrolling: touch; flex: 1; min-height: 0; }
+.song-row { width: 100%; display: flex; align-items: center; gap: 12px; text-align: left; background: none; border: 0; border-radius: 10px; padding: 10px 8px; color: var(--ink); font: inherit; cursor: pointer; min-height: 52px; }
+.song-row.active { background: var(--accent-soft); }
+.song-row.current .song-title { color: var(--accent); }
+.song-num { flex: 0 0 auto; min-width: 2.2em; font-variant-numeric: tabular-nums; font-weight: 700; color: var(--ink-3); text-align: right; font-size: 14px; }
+.song-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.song-title { font-weight: 600; font-size: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-first { font-size: 13px; color: var(--ink-2); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.song-tag { flex: 0 0 auto; font-size: 11px; font-weight: 700; color: var(--accent); background: var(--accent-soft); border-radius: 999px; padding: 2px 8px; }
+.song-tag.muted-tag { color: var(--ink-3); background: transparent; font-weight: 600; }
+.song-section { font-size: 12px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-3); padding: 10px 8px 4px; }
+.song-empty { padding: 16px 8px; color: var(--ink-2); }
+.now-song { font-weight: 600; max-width: 40vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-songs { font-weight: 700; }
+.rail-item { content-visibility: auto; contain-intrinsic-size: auto 130px; }

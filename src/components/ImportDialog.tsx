@@ -38,6 +38,9 @@ type Props = {
   onAdded: (rows: SlideRow[], removedIds: string[], suggestedTitle: string) => void;
 };
 
+/** Large decks: preview the first slides only, so the window stays quick. */
+const PREVIEW_MAX = 60;
+
 const KIND_LABEL: Record<ImportKind, string> = { pdf: "PDF", pptx: "PowerPoint", images: "pictures" };
 
 function unsupportedMessage(files: File[]) {
@@ -324,7 +327,7 @@ export default function ImportDialog({ files, supabase, userId, deckId, theme, s
 
             <div className="import-grid">
               {useTheme
-                ? themeSlides.map((s, i) => (
+                ? themeSlides.slice(0, PREVIEW_MAX).map((s, i) => (
                     <figure key={i} className="import-thumb" title={s.skipped.length ? `Left out: ${s.skipped.join(", ")}` : undefined}>
                       <SlideView
                         slide={{
@@ -339,13 +342,18 @@ export default function ImportDialog({ files, supabase, userId, deckId, theme, s
                       {s.skipped.length ? <span className="skip-note">left out</span> : null}
                     </figure>
                   ))
-                : pictureItems.map(({ page: p }, i) => (
+                : pictureItems.slice(0, PREVIEW_MAX).map(({ page: p }, i) => (
                     <figure key={p.previewUrl} className="import-thumb">
                       {/* eslint-disable-next-line @next/next/no-img-element */}
                       <img src={p.previewUrl} alt={`Slide ${i + 1}`} />
                       <figcaption>{i + 1}</figcaption>
                     </figure>
                   ))}
+              {count > PREVIEW_MAX ? (
+                <p className="subtle" style={{ gridColumn: "1 / -1", margin: "4px 0" }}>
+                  …and {count - PREVIEW_MAX} more slides.
+                </p>
+              ) : null}
             </div>
             <div className="row">
               <button className="btn" onClick={onClose}>

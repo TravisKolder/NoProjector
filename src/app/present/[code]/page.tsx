@@ -6,13 +6,15 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLinkButton from "@/components/CopyLinkButton";
 import QrModal from "@/components/QrModal";
 import SlideView from "@/components/SlideView";
+import SongPicker from "@/components/SongPicker";
 import { clearPresenterToken, getDevice, getPref, getPresenterToken, setPref, setPresenterToken } from "@/lib/device";
+import { buildSongIndex, songAt, type SongEntry } from "@/lib/songs";
 import type { PresenceMember } from "@/lib/types";
 import { useLiveSession, useWakeLock } from "@/lib/useLiveSession";
 import { displayNameFor, useUser } from "@/lib/useUser";
 
 type Role = "checking" | "presenter" | "not-presenter";
-type Modal = null | "qr" | "handoff" | "end";
+type Modal = null | "qr" | "handoff" | "end" | "songs";
 
 export default function PresenterPage() {
   const params = useParams<{ code: string }>();
@@ -29,6 +31,7 @@ export default function PresenterPage() {
   const [localIdx, setLocalIdx] = useState(0);
   const [actionError, setActionError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [recent, setRecent] = useState<number[]>([]);
   const inFlight = useRef(0);
 
   useEffect(() => {
@@ -93,6 +96,16 @@ export default function PresenterPage() {
 
   useWakeLock(role === "presenter" && session?.status === "live");
 
+  // Song list, built from slide titles (and "Number:" / "First line:" notes when present).
+  const deckSlides = session?.slides;
+  const songs = useMemo(() => (deckSlides ? buildSongIndex(deckSlides, notes) : []), [deckSlides, notes]);
+  const currentSong = songAt(songs, localIdx);
+  const currentSongIndex = currentSong?.index;
+  useEffect(() => {
+    if (currentSongIndex === undefined) return;
+    setRecent((r) => [currentSongIndex, ...r.filter((i) => i !== currentSongIndex)].slice(0, 12));
+  }, [currentSongIndex]);
+
   const go = useCallback(
     async (target: number) => {
       if (!session || !token || role !== "presenter") return;
@@ -117,6 +130,11 @@ export default function PresenterPage() {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (modal || (e.target as HTMLElement)?.closest("input, textarea")) return;
+      if ((e.key === "/" || e.key.toLowerCase() === "s") && songs.length && !e.metaKey && !e.ctrlKey) {
+        e.preventDefault();
+        setModal("songs");
+        return;
+      }
       if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(e.key)) {
         e.preventDefault();
         go(localIdx + 1);
@@ -127,7 +145,12 @@ export default function PresenterPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, localIdx, modal]);
+  }, [go, localIdx, modal, songs.length]);
+
+  function pickSong(song: SongEntry) {
+    setModal(null);
+    go(song.start);
+  }
 
   function toggleLight() {
     setLight((v) => {
@@ -257,6 +280,8 @@ export default function PresenterPage() {
   const handoffTarget = session.handoff_to ? viewers.find((v) => v.clientId === session.handoff_to) : null;
   const atStart = idx <= 0;
   const atEnd = idx >= slides.length - 1;
+  const nextIsNewSong = !atEnd && songs.length > 0 && songAt(songs, idx + 1)?.index !== currentSong?.index;
+  const songProgress = currentSong ? `${idx - currentSong.start + 1}/${currentSong.end - currentSong.start + 1}` : "";
 
   return (
     <main className="presenter">
@@ -269,6 +294,11 @@ export default function PresenterPage() {
           {viewers.length} watching
         </span>
         <span className="spacer" />
+        {songs.length ? (
+          <button className="btn btn-sm btn-primary btn-songs" onClick={() => setModal("songs")} title="Find a song (S)">
+            ♪ Songs
+          </button>
+        ) : null}
         <button className="btn btn-sm" onClick={() => setModal("qr")}>
           Show QR
         </button>
@@ -300,11 +330,26 @@ export default function PresenterPage() {
 
       {light ? (
         <section className="light-mode">
-          <div className="now">
-            <div className="counter">
-              {idx + 1} / {slides.length}
-            </div>
-            <div className="subtle">{slides[idx]?.content.title ?? ""}</div>
+          <div className="now stack" style={{ gap: 8, alignItems: "center" }}>
+            {currentSong ? (
+              <>
+                <div className="now-song" style={{ maxWidth: "90vw", fontSize: 18 }}>
+                  {currentSong.number ? `${currentSong.number}. ` : ""}
+                  {currentSong.title}
+                </div>
+                <div className="subtle counter">Slide {songProgress} of this song</div>
+                <button className="btn btn-primary btn-songs" style={{ minHeight: 48, fontSize: 18, width: "100%" }} onClick={() => setModal("songs")}>
+                  ♪ Find a song
+                </button>
+              </>
+            ) : (
+              <>
+                <div className="counter">
+                  {idx + 1} / {slides.length}
+                </div>
+                <div className="subtle">{slides[idx]?.content.title ?? ""}</div>
+              </>
+            )}
           </div>
           <button className="btn" onClick={() => go(idx - 1)} disabled={atStart}>
             ← Back
@@ -319,16 +364,34 @@ export default function PresenterPage() {
             <div className="stack">
               <SlideView slide={slides[idx]} theme={session.deck.theme} variant="preview" />
               <div className="row subtle">
-                <span className="counter">
-                  Slide {idx + 1} of {slides.length}
-                </span>
-                <span className="spacer" />
-                <span>{session.deck.title}</span>
+                {currentSong ? (
+                  <>
+                    <span className="now-song" title={currentSong.title}>
+                      {currentSong.number ? `${currentSong.number}. ` : ""}
+                      {currentSong.title}
+                    </span>
+                    <span className="counter">{songProgress}</span>
+                    <span className="spacer" />
+                    <span className="counter">
+                      Slide {idx + 1} of {slides.length}
+                    </span>
+                  </>
+                ) : (
+                  <>
+                    <span className="counter">
+                      Slide {idx + 1} of {slides.length}
+                    </span>
+                    <span className="spacer" />
+                    <span>{session.deck.title}</span>
+                  </>
+                )}
               </div>
             </div>
             <div className="stack">
               <div>
-                <div className="next-label">{atEnd ? "Last slide" : "Next"}</div>
+                <div className="next-label">
+                  {atEnd ? "Last slide" : nextIsNewSong ? `Next: new song (${songAt(songs, idx + 1)?.title ?? ""})` : "Next"}
+                </div>
                 {atEnd ? (
                   <div className="card subtle">End of deck</div>
                 ) : (
@@ -355,6 +418,10 @@ export default function PresenterPage() {
       )}
 
       {modal === "qr" ? <QrModal code={code} onClose={() => setModal(null)} /> : null}
+
+      {modal === "songs" ? (
+        <SongPicker songs={songs} current={currentSong} recent={recent} onPick={pickSong} onClose={() => setModal(null)} />
+      ) : null}
 
       {modal === "handoff" ? (
         <div className="overlay" onClick={() => setModal(null)} role="dialog" aria-modal="true">
