@@ -258,3 +258,19 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
 .how li { counter-increment: how; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: baseline; color: var(--ink-2); line-height: 1.45; }
 .how li::before { content: counter(how); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-weight: 700; font-size: 14px; align-self: start; }
 .how strong { color: var(--ink); }
+
+/* Landing page: one column on phones, two columns from 900px */
+.landing { max-width: 440px; }
+@media (min-width: 900px) {
+  .landing { max-width: 1040px; }
+  .landing-grid {
+    display: grid;
+    grid-template-columns: minmax(0, 440px) minmax(0, 1fr);
+    grid-template-areas: "hero art" "main art";
+    grid-template-rows: auto 1fr;
+    column-gap: 64px;
+  }
+  .landing-hero { grid-area: hero; }
+  .landing-main { grid-area: main; }
+  .landing-art { grid-area: art; align-self: center; max-width: 520px; margin: 0 auto; }
+}
