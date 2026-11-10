@@ -247,3 +247,6 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
   @media (prefers-color-scheme: dark) { .skel::after { background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.06), transparent); } }
 }
 @keyframes skel-shimmer { 100% { transform: translateX(100%); } }
+
+/* ───── Landing illustration ───── */
+.hero-art { display: block; width: 100%; max-width: 440px; height: auto; margin: 0 auto 24px; }
