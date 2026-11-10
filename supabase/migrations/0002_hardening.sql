@@ -210,3 +210,66 @@ begin
     set display_name = excluded.display_name
     where public.session_viewers.secret_hash = excluded.secret_hash;
 end $$;
+
+-- ───────────────────────── Task 6: small hardening items ─────────────────────────
+
+-- verify_presenter now also requires the session not to have expired (matching np_presenter_session).
+create or replace function public.verify_presenter(p_code text, p_token text)
+returns boolean
+language plpgsql stable security definer set search_path = public as $$
+begin
+  perform 1
+  from public.sessions s
+  join public.session_secrets x on x.session_id = s.id
+  where s.code = upper(p_code)
+    and x.presenter_token_hash = public.np_hash(coalesce(p_token, ''))
+    and s.status = 'live'
+    and s.expires_at > now();
+  return found;
+end $$;
+
+-- Session codes now come from a cryptographic random source (pgcrypto's gen_random_bytes,
+-- in Supabase's "extensions" schema) instead of random(). Same 31-character alphabet and
+-- 6-character length. Bytes of 248 or more are discarded so every character is equally
+-- likely (248 = 8 × 31). Otherwise unchanged from 0001.
+create extension if not exists pgcrypto with schema extensions;
+
+create or replace function public.start_session(p_deck_id uuid, p_presenter_name text default null)
+returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  v_uid   uuid := auth.uid();
+  v_abc   text := 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';
+  v_code  text;
+  v_token text;
+  v_count int;
+  v_id    uuid;
+  v_byte  int;
+begin
+  if v_uid is null then raise exception 'Sign in to present'; end if;
+  if not exists (select 1 from public.decks where id = p_deck_id and owner_id = v_uid) then
+    raise exception 'Deck not found';
+  end if;
+  select count(*) into v_count from public.slides where deck_id = p_deck_id;
+  if v_count = 0 then raise exception 'Add at least one slide first'; end if;
+
+  loop
+    v_code := '';
+    while length(v_code) < 6 loop
+      v_byte := get_byte(extensions.gen_random_bytes(1), 0);
+      if v_byte < 248 then
+        v_code := v_code || substr(v_abc, 1 + (v_byte % length(v_abc)), 1);
+      end if;
+    end loop;
+    exit when not exists (select 1 from public.sessions where code = v_code);
+  end loop;
+
+  v_token := public.np_new_token();
+  insert into public.sessions (code, deck_id, owner_id, slide_count, presenter_name)
+  values (v_code, p_deck_id, v_uid, v_count, coalesce(nullif(trim(p_presenter_name), ''), 'Presenter'))
+  returning id into v_id;
+  insert into public.session_secrets (session_id, presenter_token_hash)
+  values (v_id, public.np_hash(v_token));
+
+  return json_build_object('code', v_code, 'token', v_token);
+end $$;
