@@ -72,7 +72,9 @@ export async function renderPdf(file: File, onProgress?: Progress): Promise<Rend
   pdfjs.GlobalWorkerOptions.workerSrc = "/pdf.worker.min.mjs";
 
   const data = new Uint8Array(await file.arrayBuffer());
-  const task = pdfjs.getDocument({ data });
+  // useWasm: false keeps PDF.js on its JavaScript image decoders; the Content-Security-Policy
+  // doesn't allow compiling WebAssembly.
+  const task = pdfjs.getDocument({ data, useWasm: false });
   const doc = await task.promise;
   const pages: RenderedPage[] = [];
   try {
