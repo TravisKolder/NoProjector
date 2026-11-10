@@ -186,3 +186,27 @@ begin
   alter publication supabase_realtime drop table public.sessions;
 exception when others then null; -- already removed
 end $$;
+
+-- ───────────────────────── Task 4: cap viewer registrations ─────────────────────────
+-- Same as 0001, plus: a session holds at most 200 registered devices. A device that's
+-- already registered can always update its name; new devices past the cap are ignored
+-- (they can still watch; they just can't be handed control).
+
+create or replace function public.register_viewer(p_code text, p_client_id uuid, p_secret text, p_name text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions; v_name text;
+begin
+  select * into v from public.sessions where code = upper(p_code) and status = 'live' and expires_at > now();
+  if not found then return; end if;
+  if not exists (select 1 from public.session_viewers where session_id = v.id and client_id = p_client_id)
+     and (select count(*) from public.session_viewers where session_id = v.id) >= 200 then
+    return;
+  end if;
+  v_name := left(coalesce(nullif(trim(p_name), ''), 'Guest'), 40);
+  insert into public.session_viewers (session_id, client_id, secret_hash, display_name)
+  values (v.id, p_client_id, public.np_hash(p_secret), v_name)
+  on conflict (session_id, client_id) do update
+    set display_name = excluded.display_name
+    where public.session_viewers.secret_hash = excluded.secret_hash;
+end $$;

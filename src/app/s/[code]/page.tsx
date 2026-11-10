@@ -56,12 +56,14 @@ export default function ViewerPage() {
     const name = nameInput.trim();
     setName(name);
     setJoined(true);
-    await supabase.rpc("register_viewer", {
-      p_code: code,
-      p_client_id: device.clientId,
-      p_secret: device.secret,
-      p_name: name || "Guest",
-    });
+    // Registration only matters for being handed control; watching works without it.
+    const args = { p_code: code, p_client_id: device.clientId, p_secret: device.secret, p_name: name || "Guest" };
+    let { error } = await supabase.rpc("register_viewer", args);
+    if (error) {
+      await new Promise((r) => setTimeout(r, 1000));
+      ({ error } = await supabase.rpc("register_viewer", args));
+    }
+    if (error) console.warn("No Projector: couldn't register this device for handoff:", error.message);
   }
 
   function changeScale(delta: number) {
