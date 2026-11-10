@@ -16,6 +16,7 @@ import {
 } from "@/lib/importSlides";
 import { extractPptx, releaseExtracted, type ExtractedSlide } from "@/lib/pptxToBuilt";
 import type { Slide, SlideContent } from "@/lib/types";
+import { assertUploadable, isUploadRejection, ImageRejected, uploadErrorMessage } from "@/lib/uploadImage";
 
 type SlideRow = Slide & { position: number };
 type Mode = "picture" | "theme";
@@ -78,19 +79,20 @@ async function uploadAll(
     while (next < blobs.length) {
       const i = next++;
       const blob = blobs[i];
-      const sub = blob.type.split("/")[1] ?? "jpeg";
-      const ext = sub === "jpeg" ? "jpg" : sub === "svg+xml" ? "svg" : sub || "jpg";
+      assertUploadable(blob); // only JPEG, PNG, WebP, or GIF under 10 MB ever reach the bucket
+      const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" }[blob.type] ?? "jpg";
       const path = `${userId}/${deckId}/${crypto.randomUUID()}.${ext}`;
       let lastError: unknown = null;
       for (let attempt = 0; attempt < 3; attempt++) {
         const { error } = await supabase.storage
           .from("slide-images")
-          .upload(path, blob, { contentType: blob.type || "image/jpeg", cacheControl: "31536000" });
+          .upload(path, blob, { contentType: blob.type, cacheControl: "31536000" });
         if (!error) {
           lastError = null;
           break;
         }
         lastError = error;
+        if (isUploadRejection(error)) break; // the server refused this file; retrying won't help
         await new Promise((r) => setTimeout(r, 800 * (attempt + 1)));
       }
       if (lastError) throw lastError;
@@ -109,6 +111,7 @@ export default function ImportDialog({ files, supabase, userId, deckId, theme, s
   );
   const [pages, setPages] = useState<RenderedPage[]>([]);
   const [extracted, setExtracted] = useState<ExtractedSlide[] | null>(null);
+  const [skippedFiles, setSkippedFiles] = useState<string[]>([]);
   const [mode, setMode] = useState<Mode>(() => (getPref("import_mode") === "theme" ? "theme" : "picture"));
   const pagesRef = useRef<RenderedPage[]>([]);
   const extractedRef = useRef<ExtractedSlide[]>([]);
@@ -147,7 +150,7 @@ export default function ImportDialog({ files, supabase, userId, deckId, theme, s
             ? await renderPdf(files[0], progress)
             : kind === "pptx"
               ? await renderPptx(files[0], progress)
-              : await renderImages(files, progress);
+              : await renderImages(files, progress, (name) => setSkippedFiles((s) => [...s, name]));
       } catch (e) {
         pictureError = e instanceof Error ? e.message : String(e);
       }
@@ -250,6 +253,10 @@ export default function ImportDialog({ files, supabase, userId, deckId, theme, s
       const saved = (data as SlideRow[]).sort((a, b) => a.position - b.position);
       onAdded(saved, removedIds, kind === "images" ? "" : fileTitle(files[0]));
     } catch (e) {
+      if (e instanceof ImageRejected || isUploadRejection(e)) {
+        setPhase({ step: "error", message: uploadErrorMessage(e) });
+        return;
+      }
       const msg = e instanceof Error ? e.message : (e as { message?: string })?.message ?? String(e);
       setPhase({ step: "error", message: `Saving stopped partway (${msg}). Check your connection and try again.` });
     }
@@ -311,6 +318,14 @@ export default function ImportDialog({ files, supabase, userId, deckId, theme, s
             {kind === "pptx" && !useTheme ? (
               <p className="subtle" style={{ margin: 0 }}>
                 If fonts or layout look off, save the deck as a PDF from PowerPoint and import that. PDFs always match exactly.
+              </p>
+            ) : null}
+            {skippedFiles.length ? (
+              <p className="subtle" style={{ margin: 0 }}>
+                Left out {skippedFiles.length === 1 ? "1 picture" : `${skippedFiles.length} pictures`} this browser can&apos;t
+                read ({skippedFiles.slice(0, 3).join(", ")}
+                {skippedFiles.length > 3 ? ", …" : ""}). Save {skippedFiles.length === 1 ? "it" : "them"} as JPEG or PNG and
+                import again.
               </p>
             ) : null}
             {hiddenLeftOut ? (

@@ -5,6 +5,8 @@
  * entirely in the browser. Nothing is uploaded until the presenter confirms.
  */
 
+import { prepareImage } from "@/lib/uploadImage";
+
 export type RenderedPage = {
   blob: Blob;
   previewUrl: string;
@@ -173,14 +175,24 @@ export async function renderPptx(file: File, onProgress?: Progress): Promise<Ren
 
 // ───────────────────────── Images ─────────────────────────
 
-export async function renderImages(files: File[], onProgress?: Progress): Promise<RenderedPage[]> {
+/**
+ * One slide per picture, as JPEG. Pictures this browser can't read (HEIC outside Safari,
+ * damaged files) are skipped and reported through `onSkip`, never uploaded as-is.
+ */
+export async function renderImages(
+  files: File[],
+  onProgress?: Progress,
+  onSkip?: (fileName: string) => void,
+): Promise<RenderedPage[]> {
   const sorted = [...files].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
   const pages: RenderedPage[] = [];
   for (let i = 0; i < sorted.length; i++) {
     onProgress?.(i, sorted.length);
     const file = sorted[i];
     try {
-      const bitmap = await createImageBitmap(file);
+      // SVG and some other formats only decode through an <img>, so convert those first.
+      const source = /^image\/(jpeg|png|webp|gif)$/.test(file.type) ? file : await prepareImage(file, MAX_EDGE);
+      const bitmap = await createImageBitmap(source);
       const canvas = document.createElement("canvas");
       canvas.width = bitmap.width;
       canvas.height = bitmap.height;
@@ -188,8 +200,7 @@ export async function renderImages(files: File[], onProgress?: Progress): Promis
       bitmap.close();
       pages.push(await finish(flattenToWhite(canvas)));
     } catch {
-      // A format this browser can't decode (e.g. HEIC outside Safari): keep the original.
-      pages.push({ blob: file, previewUrl: URL.createObjectURL(file), width: 0, height: 0 });
+      onSkip?.(file.name);
     }
   }
   onProgress?.(sorted.length, sorted.length);

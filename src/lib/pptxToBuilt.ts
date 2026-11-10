@@ -8,6 +8,7 @@
  */
 
 import type { SlideContent } from "@/lib/types";
+import { prepareImage } from "@/lib/uploadImage";
 
 export type ExtractedImage = { blob: Blob; previewUrl: string };
 
@@ -278,8 +279,13 @@ export async function extractPptx(
       const raw = await zip.file(main.target!)?.async("blob");
       if (raw) {
         const ext = main.target!.split(".").pop()!.toLowerCase();
-        const blob = new Blob([raw], { type: MIME[ext] ?? "image/png" });
-        image = { blob, previewUrl: URL.createObjectURL(blob) };
+        try {
+          // Converts SVG/BMP to PNG and shrinks huge photos so the upload is accepted.
+          const blob = await prepareImage(new Blob([raw], { type: MIME[ext] ?? "image/png" }));
+          image = { blob, previewUrl: URL.createObjectURL(blob) };
+        } catch {
+          image = undefined; // reported below as a left-out picture
+        }
       }
     }
     if (pics.length > (image ? 1 : 0)) {

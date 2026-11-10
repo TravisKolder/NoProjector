@@ -8,6 +8,7 @@ import ImportDialog from "@/components/ImportDialog";
 import SlideView from "@/components/SlideView";
 import SongPicker from "@/components/SongPicker";
 import { buildSongIndex, songAt } from "@/lib/songs";
+import { prepareImage, uploadErrorMessage } from "@/lib/uploadImage";
 import { setPresenterToken } from "@/lib/device";
 import { THEMES, THEME_IDS } from "@/lib/themes";
 import type { Slide, SlideContent, ThemeId } from "@/lib/types";
@@ -52,25 +53,6 @@ const textToTable = (s: string) =>
     .map((line) => line.trim())
     .filter(Boolean)
     .map((line) => line.split("|").map((c) => c.trim()));
-
-/** Shrinks large photos before upload so viewers on weak signal load them quickly. */
-async function shrinkImage(file: File): Promise<Blob> {
-  if (!/^image\/(jpeg|png|webp|heic|heif)$/.test(file.type)) return file;
-  try {
-    const bitmap = await createImageBitmap(file);
-    const max = 1920;
-    const scale = Math.min(1, max / Math.max(bitmap.width, bitmap.height));
-    if (scale === 1 && file.size < 1_000_000) return file;
-    const canvas = document.createElement("canvas");
-    canvas.width = Math.round(bitmap.width * scale);
-    canvas.height = Math.round(bitmap.height * scale);
-    canvas.getContext("2d")!.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
-    const blob = await new Promise<Blob | null>((r) => canvas.toBlob(r, "image/jpeg", 0.85));
-    return blob ?? file;
-  } catch {
-    return file;
-  }
-}
 
 export default function DeckBuilderPage() {
   const { id: deckId } = useParams<{ id: string }>();
@@ -255,17 +237,25 @@ export default function DeckBuilderPage() {
 
   async function uploadImage(file: File) {
     if (!user || !current) return;
-    if (file.size > 20_000_000) return setError("That image is over 20 MB.");
+    // Very large files are refused before decoding so a phone doesn't run out of memory.
+    if (file.size > 50 * 1024 * 1024) return setError("That image is too large. Use a JPEG or PNG under 10 MB.");
     setUploading(true);
     setError(null);
-    const blob = await shrinkImage(file);
-    const ext = blob.type === "image/jpeg" ? "jpg" : (file.name.split(".").pop() || "img").toLowerCase();
+    let blob: Blob;
+    try {
+      // Shrinks big photos and converts other formats (HEIC, SVG, BMP) to JPEG or PNG.
+      blob = await prepareImage(file);
+    } catch (e) {
+      setUploading(false);
+      return setError(uploadErrorMessage(e));
+    }
+    const ext = { "image/jpeg": "jpg", "image/png": "png", "image/webp": "webp", "image/gif": "gif" }[blob.type] ?? "jpg";
     const path = `${user.id}/${deckId}/${crypto.randomUUID()}.${ext}`;
     const { error } = await supabase.storage
       .from("slide-images")
-      .upload(path, blob, { contentType: blob.type || file.type, cacheControl: "31536000" });
+      .upload(path, blob, { contentType: blob.type, cacheControl: "31536000" });
     setUploading(false);
-    if (error) return setError(error.message);
+    if (error) return setError(uploadErrorMessage(error));
     const { data } = supabase.storage.from("slide-images").getPublicUrl(path);
     updateContent({ imageUrl: data.publicUrl });
   }
