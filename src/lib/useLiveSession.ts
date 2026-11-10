@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/client";
-import type { GetSessionResult, PresenceMember, SessionState } from "@/lib/types";
+import type { GetSessionResult, GetSessionStateResult, PresenceMember, SessionState } from "@/lib/types";
 
 type LoadState = "loading" | "ready" | "expired" | "missing" | "error";
 
@@ -30,9 +30,11 @@ function preloadImages(session: SessionState) {
 }
 
 /**
- * Loads a session (all slides up front, so a dropped connection never blanks the screen),
- * then follows it live: slide changes and handoffs arrive as row updates; presence gives the
- * viewer list. Any reconnect re-reads the session so the device lands on the right slide.
+ * Loads a session's slides once (all up front, so a dropped connection never blanks the screen),
+ * then follows it live with small state checks: slide changes and handoffs arrive as updates;
+ * presence gives the viewer list. Reconnects, wake-ups, and refresh broadcasts re-read only the
+ * small state (get_session_state). The full deck is fetched again only if the session changed
+ * or its slide count no longer matches what's in memory.
  */
 export function useLiveSession(code: string, me: PresenceMember | null) {
   const supabase = useMemo(() => createClient(), []);
@@ -45,8 +47,11 @@ export function useLiveSession(code: string, me: PresenceMember | null) {
   const meRef = useRef(me);
   meRef.current = me;
   const preloadedFor = useRef<string | null>(null);
+  const sessionRef = useRef<SessionState | null>(null);
+  sessionRef.current = session;
 
-  const reload = useCallback(async () => {
+  /** Full load: session state plus every slide. */
+  const loadFull = useCallback(async () => {
     const { data, error: rpcError } = await supabase.rpc("get_session", { p_code: code });
     if (rpcError) {
       // Keep showing what we have; this is usually a dropped connection.
@@ -72,9 +77,36 @@ export function useLiveSession(code: string, me: PresenceMember | null) {
     }
   }, [code, supabase]);
 
+  /** Small refresh: session state only, merged into the slides already in memory. */
+  const refreshState = useCallback(async () => {
+    const current = sessionRef.current;
+    if (!current) return loadFull();
+    const { data, error: rpcError } = await supabase.rpc("get_session_state", { p_code: code });
+    if (rpcError) {
+      setError(rpcError.message); // keep showing what we have
+      return;
+    }
+    setError(null);
+    const result = data as GetSessionStateResult;
+    if (!result) {
+      setLoadState("missing");
+      return;
+    }
+    if ("expired" in result) {
+      setLoadState("expired");
+      return;
+    }
+    if (result.id !== current.id || result.slide_count !== current.slides.length) return loadFull();
+    setSession((prev) => (prev && prev.id === result.id ? { ...prev, ...result } : prev));
+    setLoadState("ready");
+  }, [code, supabase, loadFull]);
+
+  /** What callers use: a full load the first time, a small state refresh after that. */
+  const reload = refreshState;
+
   useEffect(() => {
-    reload();
-  }, [reload]);
+    loadFull();
+  }, [loadFull]);
 
   const sessionId = session?.id;
   const hasMe = me !== null;

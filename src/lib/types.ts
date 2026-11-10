@@ -33,6 +33,10 @@ export type SessionState = {
 
 export type GetSessionResult = SessionState | { code: string; expired: true } | null;
 
+/** Everything in a session except the slides (from get_session_state). */
+export type SessionLiveState = Omit<SessionState, "slides">;
+export type GetSessionStateResult = SessionLiveState | { code: string; expired: true } | null;
+
 export type PresenceMember = {
   clientId: string;
   name: string;
