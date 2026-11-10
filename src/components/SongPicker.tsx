@@ -10,11 +10,13 @@ type Props = {
   recent?: number[];
   onPick: (song: SongEntry) => void;
   onClose: () => void;
+  /** When presenting from a set: whether a song that isn't in the set gets added after the current one. */
+  addToSet?: { name: string; checked: boolean; onChange: (checked: boolean) => void };
 };
 
 const WHY_LABEL = { number: "", title: "", "first line": "", lyrics: "in lyrics" } as const;
 
-export default function SongPicker({ songs, current, recent = [], onPick, onClose }: Props) {
+export default function SongPicker({ songs, current, recent = [], onPick, onClose, addToSet }: Props) {
   const [query, setQuery] = useState("");
   const [active, setActive] = useState(0);
   const input = useRef<HTMLInputElement>(null);
@@ -100,6 +102,12 @@ export default function SongPicker({ songs, current, recent = [], onPick, onClos
             Close
           </button>
         </div>
+        {addToSet ? (
+          <label className="song-option">
+            <input type="checkbox" checked={addToSet.checked} onChange={(e) => addToSet.onChange(e.target.checked)} />
+            Add to “{addToSet.name}” if it isn&apos;t in the set
+          </label>
+        ) : null}
         <ul className="song-list" ref={list}>
           {showRecent ? (
             <>

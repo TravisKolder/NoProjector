@@ -1,6 +1,9 @@
-# Proposals waiting on Travis (Tasks 13 and 14)
+# Proposals for Tasks 13 and 14
 
-Nothing in this file has been built. Each needs a yes, a no, or changes first.
+**Status (Nov 9):** Travis approved both. Task 13 was applied as written. Task 14 was built with his answers:
+the three newest sets per deck are kept; other leaders edit a set through a share link (no account needed);
+viewers see nothing of the set; and on a song's last slide, Next waits: the presenter taps the next song in the
+set strip (or picks any song). The original proposals follow.
 
 ---
 

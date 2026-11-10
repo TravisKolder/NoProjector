@@ -18,6 +18,7 @@ Built with Next.js 15, Supabase (Postgres, Auth, Realtime, Storage), and Vercel.
 - Presenter view: current slide, next-slide preview, notes, live viewer count; arrow keys and clickers work on a laptop
 - Lightweight mode: two large Back / Next buttons
 - **Song list and search** (`src/lib/songs.ts`, `src/components/SongPicker.tsx`): for decks where each song's slides share a title, a **♪ Songs** button (or **S** on a keyboard) searches by title, song number, first line, or any lyric and jumps every phone to that song. Shows the current song, "used tonight," and when the next slide starts a new song. Also available as **Find song** in the editor.
+- **Set lists** (`src/app/sets/[id]/page.tsx`, `src/lib/setLists.ts`, `src/components/SetStrip.tsx`): for a song deck, plan "tonight's set" ahead of time from the deck list. Search songs, add them in order, and present straight from the set. The three newest sets per deck are kept. **Copy edit link** lets another leader edit the set without an account; **New link** turns the old link off. While presenting, a strip shows the set: tap any song to jump. On a song's last slide, Next waits for the presenter to tap the next song. A song picked with ♪ Songs that isn't in the set is added after the current one (a checkbox turns this off). Viewers see none of this.
 - Hand off control to anyone in the session, including viewers without an account; the session owner can always take it back
 - End the session and either close slides immediately or leave them viewable at the link for 3 hours
 
@@ -32,7 +33,10 @@ Built with Next.js 15, Supabase (Postgres, Auth, Realtime, Storage), and Vercel.
 ### 1. Supabase project and database
 1. Create a project at [supabase.com](https://supabase.com).
 2. **SQL Editor → New query**: paste all of `supabase/migrations/0001_init.sql` and run it. It creates the tables, security rules, session functions, and the `slide-images` storage bucket.
-3. **New query** again: paste all of `supabase/migrations/0002_hardening.sql` and run it. It limits uploads (10 MB; JPEG, PNG, WebP, GIF), adds the small `get_session_state` call, makes the database announce session changes so codes can't be listed, caps a session at 200 registered devices, and switches session codes to a cryptographic random source. Both files are safe to run more than once.
+3. **New query** again: paste all of `supabase/migrations/0002_hardening.sql` and run it. It limits uploads (10 MB; JPEG, PNG, WebP, GIF), adds the small `get_session_state` call, makes the database announce session changes so codes can't be listed, caps a session at 200 registered devices, and switches session codes to a cryptographic random source.
+4. **New query** again: paste all of `supabase/migrations/0003_set_lists.sql` and run it. It adds set lists.
+
+All three files are safe to run more than once.
 
 ### 2. Sign-in email
 Supabase's built-in sender allows only a few emails an hour and won't let you edit templates, so connect your own sender (these steps use [Resend](https://resend.com)):
@@ -76,9 +80,10 @@ Open http://localhost:3000. Sign in with the code from the email (the link in th
 | `session_secrets` | Hash of the current presenter token. Never readable by clients |
 | `session_viewers` | Random device id, hashed device secret, and display name for each joined phone (up to 200 per session), so only the chosen phone can accept a handoff. Deleted when the session ends |
 | Realtime | Each session has a public broadcast channel `np:CODE`. The database sends an empty `refresh` message on every change; phones then call `get_session_state`. Presence gives the viewer list and count |
+| `set_lists` | Ordered songs (by title and number) for a deck, plus a random share key for the edit link. Only the owner reads the table; link holders and presenters go through functions. The newest three per deck are kept |
 | `slide-images` bucket | Public pictures for slides; 10 MB, JPEG/PNG/WebP/GIF only; presenters upload into a folder named after their user id |
 
-Key functions: `start_session`, `get_session` (all slides, speaker notes stripped), `get_session_state` (everything but the slides), `get_presenter_notes`, `set_slide`, `register_viewer`, `offer_handoff`, `claim_handoff`, `decline_handoff`, `cancel_handoff`, `reclaim_session`, `end_session`, `verify_presenter`.
+Key functions: `start_session`, `get_session` (all slides, speaker notes stripped), `get_session_state` (everything but the slides), `get_presenter_notes`, `set_slide`, `register_viewer`, `offer_handoff`, `claim_handoff`, `decline_handoff`, `cancel_handoff`, `reclaim_session`, `end_session`, `verify_presenter`, and for set lists `get_shared_set` / `save_shared_set` (edit link) and `get_session_sets` / `save_session_set` (presenter).
 
 A handoff issues a new presenter token to the receiving phone and invalidates the old one, so only one device controls the slides at a time.
 
@@ -90,5 +95,6 @@ Every response carries security headers (Content-Security-Policy, X-Frame-Option
 - [ ] Lock a viewer phone for a minute, unlock; it should resync
 - [ ] Hand off to a phone, have them advance, take control back from the laptop
 - [ ] Use ♪ Songs to jump between songs far apart in the deck
+- [ ] Make a set, open its edit link on another phone and add a song, then present the set: it opens on the first song, Next stops at the end of each song, and the strip moves everyone
 - [ ] End with "keep 3 hours"; confirm phones can browse; end another with "close now"
 - [ ] Import a PDF and a PowerPoint file (both modes)

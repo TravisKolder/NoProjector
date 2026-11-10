@@ -5,9 +5,11 @@ import { useParams, useRouter } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import CopyLinkButton from "@/components/CopyLinkButton";
 import QrModal from "@/components/QrModal";
+import SetStrip from "@/components/SetStrip";
 import SlideView from "@/components/SlideView";
 import SongPicker from "@/components/SongPicker";
 import { clearPresenterToken, getDevice, getPref, getPresenterToken, setPref, setPresenterToken } from "@/lib/device";
+import { resolveSetSong, toSetSong, type SetList } from "@/lib/setLists";
 import { buildSongIndex, songAt, type SongEntry } from "@/lib/songs";
 import type { PresenceMember } from "@/lib/types";
 import { useLiveSession, useWakeLock } from "@/lib/useLiveSession";
@@ -33,11 +35,26 @@ export default function PresenterPage() {
   const [busy, setBusy] = useState(false);
   const [recent, setRecent] = useState<number[]>([]);
   const inFlight = useRef(0);
+  const [sets, setSets] = useState<SetList[]>([]);
+  const [activeSetId, setActiveSetId] = useState<string | null>(null);
+  const [pos, setPos] = useState(-1);
+  const [addToSet, setAddToSet] = useState(true);
+  // Set chosen with "Present" on a set: open on its first song once everything has loaded.
+  const startWithSet = useRef<string | null>(null);
 
   useEffect(() => {
     setMounted(true);
     setToken(getPresenterToken(code));
     setLight(getPref("light") === "1");
+    const fromLink = new URLSearchParams(window.location.search).get("set");
+    if (fromLink) {
+      startWithSet.current = fromLink;
+      setActiveSetId(fromLink);
+      setPref(`set_${code}`, fromLink);
+      history.replaceState(null, "", window.location.pathname);
+    } else {
+      setActiveSetId(getPref(`set_${code}`) || null);
+    }
   }, [code]);
 
   const device = useMemo(() => (mounted ? getDevice() : null), [mounted]);
@@ -106,6 +123,45 @@ export default function PresenterPage() {
     setRecent((r) => [currentSongIndex, ...r.filter((i) => i !== currentSongIndex)].slice(0, 12));
   }, [currentSongIndex]);
 
+  // Set lists for this deck: readable by whoever is presenting.
+  const loadSets = useCallback(async () => {
+    if (role !== "presenter") return;
+    const { data } = await supabase.rpc("get_session_sets", { p_code: code, p_token: token ?? "" });
+    if (Array.isArray(data)) setSets(data as SetList[]);
+  }, [role, supabase, code, token]);
+  useEffect(() => {
+    loadSets();
+    const onVis = () => document.visibilityState === "visible" && loadSets();
+    document.addEventListener("visibilitychange", onVis);
+    return () => document.removeEventListener("visibilitychange", onVis);
+  }, [loadSets]);
+
+  const activeSet = useMemo(() => sets.find((x) => x.id === activeSetId) ?? null, [sets, activeSetId]);
+  const resolved = useMemo(() => (activeSet ? activeSet.songs.map((it) => resolveSetSong(songs, it)) : []), [activeSet, songs]);
+
+  // Keep track of where we are in the set as songs change (by strip, ♪ Songs, or Back).
+  useEffect(() => {
+    if (currentSongIndex === undefined || !resolved.length) return;
+    setPos((p) => {
+      if (resolved[p]?.index === currentSongIndex) return p;
+      const after = resolved.findIndex((x, i) => i > p && x?.index === currentSongIndex);
+      if (after >= 0) return after;
+      const any = resolved.findIndex((x) => x?.index === currentSongIndex);
+      return any >= 0 ? any : p;
+    });
+  }, [currentSongIndex, resolved]);
+
+  function chooseSet(id: string | null) {
+    setActiveSetId(id);
+    setPref(`set_${code}`, id ?? "");
+    setPos(-1);
+  }
+
+  // With a set, Next stops on the last slide of a song; the presenter taps the next song.
+  const lastIdx = (session?.slides.length ?? 0) - 1;
+  const waiting =
+    !!activeSet && songs.length > 0 && localIdx < lastIdx && songAt(songs, localIdx + 1)?.index !== currentSongIndex;
+
   const go = useCallback(
     async (target: number) => {
       if (!session || !token || role !== "presenter") return;
@@ -137,7 +193,7 @@ export default function PresenterPage() {
       }
       if (["ArrowRight", "ArrowDown", "PageDown", " ", "Enter"].includes(e.key)) {
         e.preventDefault();
-        go(localIdx + 1);
+        if (!waiting) go(localIdx + 1);
       } else if (["ArrowLeft", "ArrowUp", "PageUp", "Backspace"].includes(e.key)) {
         e.preventDefault();
         go(localIdx - 1);
@@ -145,10 +201,50 @@ export default function PresenterPage() {
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [go, localIdx, modal, songs.length]);
+  }, [go, localIdx, modal, songs.length, waiting]);
+
+  // Opening a set from "Present": go to its first song.
+  useEffect(() => {
+    if (!startWithSet.current || role !== "presenter" || !activeSet || !songs.length) return;
+    if (activeSet.id !== startWithSet.current) return;
+    startWithSet.current = null;
+    const first = resolved.findIndex(Boolean);
+    if (first >= 0) {
+      setPos(first);
+      go(resolved[first]!.start);
+    }
+  }, [role, activeSet, songs.length, resolved, go]);
+
+  function jumpInSet(i: number) {
+    const song = resolved[i];
+    if (!song) return;
+    setPos(i);
+    go(song.start);
+  }
+
+  async function addSongToSet(song: SongEntry) {
+    if (!activeSet) return;
+    const at = pos + 1;
+    const next = [...activeSet.songs.slice(0, at), toSetSong(song), ...activeSet.songs.slice(at)];
+    setSets((all) => all.map((x) => (x.id === activeSet.id ? { ...x, songs: next } : x)));
+    setPos(at);
+    const { error } = await supabase.rpc("save_session_set", {
+      p_code: code,
+      p_token: token ?? "",
+      p_set: activeSet.id,
+      p_songs: next,
+    });
+    if (error) setActionError("The song is showing, but it couldn't be added to the saved set.");
+  }
 
   function pickSong(song: SongEntry) {
     setModal(null);
+    if (activeSet) {
+      const after = resolved.findIndex((x, i) => i > pos && x?.index === song.index);
+      const found = after >= 0 ? after : resolved.findIndex((x) => x?.index === song.index);
+      if (found >= 0) setPos(found);
+      else if (addToSet) addSongToSet(song);
+    }
     go(song.start);
   }
 
@@ -282,6 +378,19 @@ export default function PresenterPage() {
   const atEnd = idx >= slides.length - 1;
   const nextIsNewSong = !atEnd && songs.length > 0 && songAt(songs, idx + 1)?.index !== currentSong?.index;
   const songProgress = currentSong ? `${idx - currentSong.start + 1}/${currentSong.end - currentSong.start + 1}` : "";
+  const upNext = activeSet && pos + 1 < activeSet.songs.length ? resolved[pos + 1] : undefined;
+  const strip =
+    songs.length > 0 ? (
+      <SetStrip
+        sets={sets}
+        active={activeSet}
+        resolved={resolved}
+        pos={pos}
+        waiting={waiting}
+        onChoose={chooseSet}
+        onJump={jumpInSet}
+      />
+    ) : null;
 
   return (
     <main className="presenter">
@@ -329,7 +438,7 @@ export default function PresenterPage() {
       ) : null}
 
       {light ? (
-        <section className="light-mode">
+        <section className={`light-mode${strip && (activeSet || sets.length) ? " with-set" : ""}`}>
           <div className="now stack" style={{ gap: 8, alignItems: "center" }}>
             {currentSong ? (
               <>
@@ -351,11 +460,12 @@ export default function PresenterPage() {
               </>
             )}
           </div>
+          {strip}
           <button className="btn" onClick={() => go(idx - 1)} disabled={atStart}>
             ← Back
           </button>
-          <button className="btn btn-primary" onClick={() => go(idx + 1)} disabled={atEnd}>
-            Next →
+          <button className="btn btn-primary" onClick={() => go(idx + 1)} disabled={atEnd || waiting}>
+            {waiting ? "End of song" : "Next →"}
           </button>
         </section>
       ) : (
@@ -390,10 +500,24 @@ export default function PresenterPage() {
             <div className="stack">
               <div>
                 <div className="next-label">
-                  {atEnd ? "Last slide" : nextIsNewSong ? `Next: new song (${songAt(songs, idx + 1)?.title ?? ""})` : "Next"}
+                  {atEnd
+                    ? "Last slide"
+                    : waiting
+                      ? upNext
+                        ? `End of song. Next in the set: ${upNext.title} (tap it below)`
+                        : "End of song"
+                      : nextIsNewSong
+                        ? `Next: new song (${songAt(songs, idx + 1)?.title ?? ""})`
+                        : "Next"}
                 </div>
                 {atEnd ? (
                   <div className="card subtle">End of deck</div>
+                ) : waiting ? (
+                  upNext ? (
+                    <SlideView slide={slides[upNext.start]} theme={session.deck.theme} variant="preview" />
+                  ) : (
+                    <div className="card subtle">End of the set. Pick any song with ♪ Songs.</div>
+                  )
                 ) : (
                   <SlideView slide={slides[idx + 1]} theme={session.deck.theme} variant="preview" />
                 )}
@@ -406,21 +530,33 @@ export default function PresenterPage() {
               ) : null}
             </div>
           </section>
-          <nav className="presenter-controls">
-            <button className="btn" onClick={() => go(idx - 1)} disabled={atStart}>
-              ← Back
-            </button>
-            <button className="btn btn-primary" onClick={() => go(idx + 1)} disabled={atEnd}>
-              Next →
-            </button>
-          </nav>
+          <div className="presenter-dock">
+            {strip}
+            <nav className="presenter-controls">
+              <button className="btn" onClick={() => go(idx - 1)} disabled={atStart}>
+                ← Back
+              </button>
+              <button className="btn btn-primary" onClick={() => go(idx + 1)} disabled={atEnd || waiting}>
+                {waiting ? "End of song" : "Next →"}
+              </button>
+            </nav>
+          </div>
         </>
       )}
 
       {modal === "qr" ? <QrModal code={code} onClose={() => setModal(null)} /> : null}
 
       {modal === "songs" ? (
-        <SongPicker songs={songs} current={currentSong} recent={recent} onPick={pickSong} onClose={() => setModal(null)} />
+        <SongPicker
+          songs={songs}
+          current={currentSong}
+          recent={recent}
+          onPick={pickSong}
+          onClose={() => setModal(null)}
+          addToSet={
+            activeSet ? { name: activeSet.name || "this set", checked: addToSet, onChange: setAddToSet } : undefined
+          }
+        />
       ) : null}
 
       {modal === "handoff" ? (

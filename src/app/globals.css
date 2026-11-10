@@ -274,3 +274,60 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
   .landing-main { grid-area: main; }
   .landing-art { grid-area: art; align-self: center; max-width: 520px; margin: 0 auto; }
 }
+
+/* Set lists: deck list panel */
+.sets-panel { margin-bottom: 20px; }
+.set-h { font-size: 18px; margin: 0 0 10px; }
+.sets-list { list-style: none; margin: 0; padding: 0; display: grid; gap: 4px; }
+.sets-row { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--line); }
+.sets-row:first-child { border-top: 0; }
+.sets-row-text { flex: 1 1 220px; min-width: 0; display: flex; flex-direction: column; }
+.sets-row-text .subtle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Set lists: editor */
+.set-page { max-width: 1000px; }
+.set-name { font-size: 20px; font-weight: 700; }
+.set-editor { display: grid; gap: 16px; align-items: start; }
+.set-card { padding: 16px; }
+.set-items { list-style: none; margin: 0; padding: 0; }
+.set-item { display: flex; align-items: center; gap: 10px; padding: 6px 0; border-top: 1px solid var(--line); min-height: 52px; }
+.set-item:first-child { border-top: 0; }
+.set-item.missing .song-title { color: var(--ink-3); text-decoration: line-through; }
+.set-item.missing .song-first { color: var(--danger); }
+.set-item-actions { display: flex; gap: 2px; flex: 0 0 auto; }
+.set-item-actions .btn { min-width: 40px; min-height: 40px; padding: 4px; font-size: 16px; }
+.set-results { max-height: 60vh; margin-top: 8px; }
+.set-add { flex: 0 0 auto; width: 32px; height: 32px; border-radius: 50%; display: grid; place-items: center; font-size: 20px; font-weight: 700; color: var(--accent); background: var(--accent-soft); }
+.song-search.input { width: 100%; }
+@media (min-width: 900px) {
+  .set-editor { grid-template-columns: 1fr 1fr; }
+  .set-card:first-child { position: sticky; top: 16px; }
+}
+
+/* Set lists: presenter strip */
+.set-strip { border-top: 1px solid var(--line); background: var(--surface); padding: 8px 14px 10px; }
+.set-strip-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; font-size: 14px; }
+.set-strip-list { list-style: none; margin: 0; padding: 2px 0 4px; display: flex; gap: 8px; overflow-x: auto; -webkit-overflow-scrolling: touch; scroll-padding: 0 14px; }
+.set-chip { display: inline-flex; align-items: center; gap: 6px; min-height: 44px; max-width: 240px; padding: 6px 12px; border-radius: 999px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); font: inherit; font-size: 15px; font-weight: 600; cursor: pointer; white-space: nowrap; }
+.set-chip span:last-child { overflow: hidden; text-overflow: ellipsis; }
+.set-chip .set-n { font-variant-numeric: tabular-nums; color: var(--ink-3); font-weight: 700; }
+.set-chip.played { opacity: 0.55; }
+.set-chip.now { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.set-chip.now .set-n { color: var(--accent); }
+.set-chip.next { border: 2px solid var(--accent); }
+.set-chip.next.waiting { background: var(--accent); color: var(--accent-ink); }
+.set-chip.next.waiting .set-n { color: var(--accent-ink); }
+.set-chip:disabled { opacity: 0.4; cursor: default; text-decoration: line-through; }
+.light-mode { grid-template-columns: minmax(0, 1fr); }
+.light-mode > * { min-width: 0; }
+.light-mode .set-strip { grid-column: 1 / -1; border: 1px solid var(--line); border-radius: 12px; }
+.light-mode.with-set { grid-template-rows: auto auto 1fr 1fr; }
+@media (orientation: landscape) and (max-height: 600px) {
+  .light-mode { grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); }
+  .light-mode.with-set { grid-template-rows: auto auto 1fr; }
+}
+.light-mode .set-strip .btn { font-size: 14px; border-radius: 8px; }
+.song-option { display: flex; align-items: center; gap: 8px; font-size: 14px; color: var(--ink-2); padding: 0 2px; }
+.song-option input { width: 18px; height: 18px; accent-color: var(--accent); }
+.presenter-dock { position: sticky; bottom: 0; z-index: 5; }
+.presenter-dock .presenter-controls { position: static; }
