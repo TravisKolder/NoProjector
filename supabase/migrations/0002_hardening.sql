@@ -42,3 +42,147 @@ begin
 end $$;
 
 grant execute on function public.get_session_state(text) to anon, authenticated;
+
+
+-- ───────────────────────── Task 3: session codes can't be listed ─────────────────────────
+-- Viewers used to get live updates by reading the sessions table through Realtime, which meant
+-- anyone with the public key could list every live session code. Now the database announces
+-- each change on the session's own broadcast channel ("np:CODE", event "refresh"), phones
+-- respond by calling get_session_state, and only owners can read session rows directly.
+
+-- Sends an empty "refresh" broadcast to everyone following a session.
+-- Uses Supabase's realtime.send(payload, event, topic, private); private => false matches
+-- the public channel the app subscribes to. A failure here must never undo a slide change,
+-- so it's caught and logged instead.
+create or replace function public.np_notify(p_code text)
+returns void
+language plpgsql security definer set search_path = public as $$
+begin
+  perform realtime.send('{}'::jsonb, 'refresh', 'np:' || upper(p_code), false);
+exception when others then
+  raise warning 'np_notify(%) failed: %', p_code, sqlerrm;
+end $$;
+
+revoke all on function public.np_notify(text) from public, anon, authenticated;
+
+-- The session functions below are copied unchanged from 0001_init.sql; the only addition
+-- is the "perform public.np_notify(p_code);" line in each.
+create or replace function public.set_slide(p_code text, p_token text, p_index int)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions; n int;
+begin
+  v := public.np_presenter_session(p_code, p_token);
+  select count(*) into n from public.slides where deck_id = v.deck_id;
+  if p_index < 0 or p_index >= n then raise exception 'Slide out of range'; end if;
+  update public.sessions set current_slide = p_index, slide_count = n where id = v.id;
+  perform public.np_notify(p_code);
+end $$;
+create or replace function public.offer_handoff(p_code text, p_token text, p_client_id uuid)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions;
+begin
+  v := public.np_presenter_session(p_code, p_token);
+  if not exists (select 1 from public.session_viewers where session_id = v.id and client_id = p_client_id) then
+    raise exception 'That person has left the session';
+  end if;
+  update public.sessions set handoff_to = p_client_id, handoff_from = v.presenter_name where id = v.id;
+  perform public.np_notify(p_code);
+end $$;
+create or replace function public.cancel_handoff(p_code text, p_token text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions;
+begin
+  v := public.np_presenter_session(p_code, p_token);
+  update public.sessions set handoff_to = null, handoff_from = null where id = v.id;
+  perform public.np_notify(p_code);
+end $$;
+create or replace function public.claim_handoff(p_code text, p_client_id uuid, p_secret text)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions; v_name text; v_token text;
+begin
+  select * into v from public.sessions
+  where code = upper(p_code) and status = 'live' and expires_at > now()
+  for update;
+  if not found or v.handoff_to is distinct from p_client_id then
+    raise exception 'This handoff is no longer available';
+  end if;
+  select display_name into v_name from public.session_viewers
+  where session_id = v.id and client_id = p_client_id and secret_hash = public.np_hash(p_secret);
+  if not found then raise exception 'This handoff is no longer available'; end if;
+
+  v_token := public.np_new_token();
+  update public.session_secrets set presenter_token_hash = public.np_hash(v_token) where session_id = v.id;
+  update public.sessions
+    set handoff_to = null, handoff_from = null,
+        presenter_name = v_name, presenter_epoch = presenter_epoch + 1
+    where id = v.id;
+  perform public.np_notify(p_code);
+  return v_token;
+end $$;
+create or replace function public.decline_handoff(p_code text, p_client_id uuid, p_secret text)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions;
+begin
+  select * into v from public.sessions where code = upper(p_code) and status = 'live';
+  if not found or v.handoff_to is distinct from p_client_id then return; end if;
+  if exists (select 1 from public.session_viewers
+             where session_id = v.id and client_id = p_client_id and secret_hash = public.np_hash(p_secret)) then
+    update public.sessions set handoff_to = null, handoff_from = null where id = v.id;
+  end if;
+  perform public.np_notify(p_code);
+end $$;
+create or replace function public.reclaim_session(p_code text, p_presenter_name text default null)
+returns text
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions; v_token text;
+begin
+  select * into v from public.sessions
+  where code = upper(p_code) and owner_id = auth.uid() and status = 'live' and expires_at > now();
+  if not found then raise exception 'Only the session owner can take control back'; end if;
+  v_token := public.np_new_token();
+  update public.session_secrets set presenter_token_hash = public.np_hash(v_token) where session_id = v.id;
+  update public.sessions
+    set handoff_to = null, handoff_from = null,
+        presenter_name = coalesce(nullif(trim(p_presenter_name), ''), 'Presenter'),
+        presenter_epoch = presenter_epoch + 1
+    where id = v.id;
+  perform public.np_notify(p_code);
+  return v_token;
+end $$;
+create or replace function public.end_session(p_code text, p_token text, p_keep boolean)
+returns void
+language plpgsql security definer set search_path = public as $$
+declare v public.sessions;
+begin
+  select * into v from public.sessions where code = upper(p_code) and status = 'live';
+  if not found then raise exception 'Session is not live'; end if;
+  if v.owner_id is distinct from auth.uid() and not public.verify_presenter(p_code, p_token) then
+    raise exception 'You are not the presenter for this session';
+  end if;
+  update public.sessions
+    set status = 'ended', ended_at = now(), keep_after = coalesce(p_keep, false),
+        handoff_to = null, handoff_from = null
+    where id = v.id;
+  delete from public.session_viewers where session_id = v.id;
+  perform public.np_notify(p_code);
+end $$;
+
+-- Only owners may read session rows directly. Everyone else goes through get_session /
+-- get_session_state (security definer), so codes can't be listed with the public key.
+drop policy if exists "read viewable sessions" on public.sessions;
+drop policy if exists "owners read sessions" on public.sessions;
+create policy "owners read sessions" on public.sessions
+  for select to authenticated
+  using (owner_id = auth.uid());
+
+-- Phones no longer listen for table changes, so stop publishing them.
+do $$
+begin
+  alter publication supabase_realtime drop table public.sessions;
+exception when others then null; -- already removed
+end $$;

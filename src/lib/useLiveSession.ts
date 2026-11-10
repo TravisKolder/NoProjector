@@ -7,18 +7,6 @@ import type { GetSessionResult, GetSessionStateResult, PresenceMember, SessionSt
 
 type LoadState = "loading" | "ready" | "expired" | "missing" | "error";
 
-const LIVE_FIELDS = [
-  "status",
-  "current_slide",
-  "slide_count",
-  "presenter_name",
-  "presenter_epoch",
-  "handoff_to",
-  "handoff_from",
-  "keep_after",
-  "ended_at",
-] as const;
-
 function preloadImages(session: SessionState) {
   for (const s of session.slides) {
     if (s.content.imageUrl) {
@@ -31,7 +19,8 @@ function preloadImages(session: SessionState) {
 
 /**
  * Loads a session's slides once (all up front, so a dropped connection never blanks the screen),
- * then follows it live with small state checks: slide changes and handoffs arrive as updates;
+ * then follows it live with small state checks: the database broadcasts "refresh" on every
+ * change (slide, handoff, end) and each phone re-reads the state;
  * presence gives the viewer list. Reconnects, wake-ups, and refresh broadcasts re-read only the
  * small state (get_session_state). The full deck is fetched again only if the session changed
  * or its slide count no longer matches what's in memory.
@@ -117,23 +106,10 @@ export function useLiveSession(code: string, me: PresenceMember | null) {
       config: { presence: { key: meRef.current!.clientId } },
     });
 
+    // The database sends an empty "refresh" broadcast on this channel whenever the session
+    // changes (slide, handoff, end). Each phone then reads the small state; an ended session
+    // comes back as status "ended" (kept for 3 hours) or as expired (closed now).
     channel
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "sessions", filter: `id=eq.${sessionId}` },
-        (payload) => {
-          const next = payload.new as Partial<SessionState>;
-          setSession((prev) => {
-            if (!prev) return prev;
-            const merged = { ...prev };
-            for (const k of LIVE_FIELDS) {
-              if (k in next) (merged as Record<string, unknown>)[k] = next[k];
-            }
-            return merged;
-          });
-          if (next.status === "ended") reload();
-        },
-      )
       .on("broadcast", { event: "refresh" }, () => {
         reload();
       })
