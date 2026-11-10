@@ -5,6 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Brand from "@/components/Brand";
 import ImportDialog from "@/components/ImportDialog";
+import { DeckBuilderSkeleton } from "@/components/Skeletons";
 import SlideView from "@/components/SlideView";
 import SongPicker from "@/components/SongPicker";
 import { buildSongIndex, songAt } from "@/lib/songs";
@@ -314,7 +315,7 @@ export default function DeckBuilderPage() {
       </main>
     );
   }
-  if (!deck) return <main className="center-screen subtle">Loading…</main>;
+  if (!deck) return <DeckBuilderSkeleton />;
 
   const saveLabel = { saved: "All changes saved", saving: "Saving…", unsaved: "Editing…", error: "Couldn't save" }[saveState];
 

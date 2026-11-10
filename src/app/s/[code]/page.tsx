@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import Brand from "@/components/Brand";
+import { ViewerSkeleton } from "@/components/Skeletons";
 import SlideView from "@/components/SlideView";
 import { getDevice, getName, getPref, setName, setPref, setPresenterToken } from "@/lib/device";
 import type { PresenceMember } from "@/lib/types";
@@ -109,7 +110,7 @@ export default function ViewerPage() {
   // ───── Before the slides ─────
 
   if (!mounted || loadState === "loading") {
-    return <main className="center-screen subtle">Loading…</main>;
+    return <ViewerSkeleton />;
   }
 
   if (loadState !== "ready" || !session) {

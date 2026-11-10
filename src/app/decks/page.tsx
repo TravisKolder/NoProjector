@@ -4,6 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import Brand from "@/components/Brand";
+import { DeckGridSkeleton, DecksPageSkeleton } from "@/components/Skeletons";
 import SlideView from "@/components/SlideView";
 import { useUser } from "@/lib/useUser";
 import type { Slide, ThemeId } from "@/lib/types";
@@ -69,7 +70,7 @@ export default function DecksPage() {
     router.replace("/");
   }
 
-  if (!user) return <main className="center-screen subtle">Loading…</main>;
+  if (!user) return <DecksPageSkeleton />;
 
   return (
     <main className="page">
@@ -112,7 +113,7 @@ export default function DecksPage() {
       {error ? <p className="error">{error}</p> : null}
 
       {decks === null ? (
-        <p className="subtle">Loading…</p>
+        <DeckGridSkeleton />
       ) : decks.length === 0 ? (
         <div className="card">
           <p className="muted" style={{ margin: 0 }}>
