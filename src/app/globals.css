@@ -250,3 +250,11 @@ h1, h2, h3 { line-height: 1.2; margin: 0; }
 
 /* ───── Landing illustration ───── */
 .hero-art { display: block; width: 100%; max-width: 440px; height: auto; margin: 0 auto 24px; }
+
+/* Landing page: How it works */
+.how { margin-top: 32px; }
+.how h2 { font-size: 18px; margin-bottom: 12px; }
+.how ol { list-style: none; counter-reset: how; padding: 0; margin: 0; display: grid; gap: 12px; }
+.how li { counter-increment: how; display: grid; grid-template-columns: 28px 1fr; gap: 10px; align-items: baseline; color: var(--ink-2); line-height: 1.45; }
+.how li::before { content: counter(how); width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center; background: var(--surface); border: 1px solid var(--line); color: var(--ink); font-weight: 700; font-size: 14px; align-self: start; }
+.how strong { color: var(--ink); }

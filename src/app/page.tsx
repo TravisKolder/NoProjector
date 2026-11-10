@@ -9,7 +9,7 @@ export default function Home() {
       <div className="topbar">
         <Brand />
         <Link href="/decks" className="btn btn-sm">
-          Present
+          Start presenting
         </Link>
       </div>
       <section className="hero stack">
@@ -23,6 +23,20 @@ export default function Home() {
       <p className="subtle" style={{ marginTop: 16 }}>
         Most people join by scanning the presenter&apos;s QR code with their phone camera.
       </p>
+      <section className="how" aria-labelledby="how-title">
+        <h2 id="how-title">How it works</h2>
+        <ol>
+          <li>
+            <span><strong>Make a deck.</strong> Type slides, or import a PDF or PowerPoint.</span>
+          </li>
+          <li>
+            <span><strong>Show the QR code.</strong> Start a session and hold up your screen.</span>
+          </li>
+          <li>
+            <span><strong>Everyone follows on their phone.</strong> When you advance, every phone moves with you.</span>
+          </li>
+        </ol>
+      </section>
     </main>
   );
 }
